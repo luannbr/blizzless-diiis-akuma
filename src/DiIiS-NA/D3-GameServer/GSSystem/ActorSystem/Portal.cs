@@ -1357,22 +1357,42 @@ namespace DiIiS_NA.GameServer.GSSystem.ActorSystem
 		}
 		public StartingPoint GetSmartStartingPoint(World world)
 		{
-			if (Destination.StartingPointActorTag != 0)
-			{
-				StartingPoint NeededStartingPoint = world.GetStartingPointById(Destination.StartingPointActorTag);
-				var DestWorld = world.Game.GetWorld((WorldSno)Destination.WorldSNO);
-				var StartingPoints = DestWorld.GetActorsBySNO(ActorSno._start_location_0);
-
-				foreach (var ST in StartingPoints) if (ST.CurrentScene.SceneSNO.Id == Destination.StartingPointActorTag)
-						NeededStartingPoint = (ST as StartingPoint);
-
-				if (NeededStartingPoint != null)
-					return NeededStartingPoint;
-				else
-					return null;
-			}
-			else
+			// IMPORTANT:
+			// The client will enter an infinite loading screen if we send LoadingWarping but
+			// never actually transition the player (e.g. missing starting point).
+			// Many maps/portals in Blizzless have inconsistent tags, so we must resolve
+			// a sane fallback starting point.
+			if (world == null)
 				return null;
+
+			// 1) Exact match by actor tag (StartingPoint.TargetId)
+			if (Destination != null && Destination.StartingPointActorTag != 0)
+			{
+				var exact = world.GetStartingPointById(Destination.StartingPointActorTag);
+				if (exact != null)
+					return exact;
+			}
+
+			var all = world.Actors.Values.OfType<StartingPoint>().ToList();
+			if (all.Count == 0)
+				return null;
+
+			// 2) Prefer a starting point whose scene belongs to the destination LevelArea.
+			// (Many destinations are correct by levelarea even when actor-tag is wrong.)
+			if (Destination != null && Destination.DestLevelAreaSNO > 0)
+			{
+				var inLevelArea = all
+					.Where(sp => sp.CurrentScene != null
+						&& sp.CurrentScene.Specification != null
+						&& sp.CurrentScene.Specification.SNOLevelAreas != null
+						&& sp.CurrentScene.Specification.SNOLevelAreas.Contains(Destination.DestLevelAreaSNO))
+					.ToList();
+				if (inLevelArea.Count > 0)
+					return inLevelArea[0];
+			}
+
+			// 3) Fallback: first available starting point in the destination world.
+			return all[0];
 		}
 		public override void OnTargeted(Player player, TargetMessage message)
 		{
@@ -1391,9 +1411,8 @@ namespace DiIiS_NA.GameServer.GSSystem.ActorSystem
 				foreach (var door in doors)
 					if (!door.isOpened)
 						return;
-			//return;
-			if (Destination.WorldSNO != (int)WorldSno.__NONE)
-				player.InGameClient.SendMessage(new SimpleMessage(Opcodes.LoadingWarping));
+			// DO NOT send LoadingWarping until we know we can actually move the player.
+			// Otherwise the client can get stuck in an infinite loading screen.
 			if (World.IsPvP)
 				Destination.WorldSNO = (int)WorldSno.x1_tristram_adventure_mode_hub;
 			var world = World.Game.GetWorld((WorldSno)Destination.WorldSNO);
@@ -1463,6 +1482,10 @@ namespace DiIiS_NA.GameServer.GSSystem.ActorSystem
 				startingPoint = GetSmartStartingPoint(world);
 			if (startingPoint != null)
 			{
+				// Only show the loading screen if we will actually switch worlds.
+				if (Destination.WorldSNO != (int)WorldSno.__NONE && world != World)
+					player.InGameClient.SendMessage(new SimpleMessage(Opcodes.LoadingWarping));
+
 				if (SNO == ActorSno._a2dun_zolt_portal_timedevent) //a2 timed event
 				{
 					if (!World.Game.QuestManager.SideQuests[120396].Completed)
@@ -1528,7 +1551,11 @@ namespace DiIiS_NA.GameServer.GSSystem.ActorSystem
 					bounty.CheckLevelArea(Destination.DestLevelAreaSNO);
 			}
 			else
-				Logger.Warn("Portal's tagged starting point does not exist (Tag = {0})", Destination.StartingPointActorTag);
+			{
+				// Critical: if we can't resolve a start point, do NOT leave the client in LoadingWarping.
+				Logger.Warn("Portal's tagged starting point does not exist (Tag = {0}), WorldSNO={1}, DestLevelAreaSNO={2}",
+					Destination.StartingPointActorTag, Destination.WorldSNO, Destination.DestLevelAreaSNO);
+			}
 		}
 	}
 }
