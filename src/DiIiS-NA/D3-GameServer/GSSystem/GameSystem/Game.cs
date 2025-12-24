@@ -1270,28 +1270,30 @@ namespace DiIiS_NA.GameServer.GSSystem.GameSystem
 
 		public void SetDifficulty(int diff)
 		{
+			// Difficulty is 0..19. The handicap table in GameBalance (256027)
+			// is indexed starting at 1 for Normal, so keep a separate index for that.
 			Difficulty = Math.Clamp(diff, 0, 19);
-			diff++;
-			if (diff > 0)
+			int handicapIndex = Difficulty + 1;
+			if (Difficulty > 0)
 			{
 				var handicapLevels = (GameBalance)MPQStorage.Data.Assets[SNOGroup.GameBalance][256027].Data;
-				HpModifier = handicapLevels.HandicapLevelTables[diff].HPMod * GameModsConfig.Instance.Rate.HealthByDifficulty[Difficulty] 
+				HpModifier = handicapLevels.HandicapLevelTables[handicapIndex].HPMod * GameModsConfig.Instance.Rate.HealthByDifficulty[Difficulty] 
 				                                                            * GameModsConfig.Instance.Monster.HealthMultiplier;
-				DmgModifier = handicapLevels.HandicapLevelTables[diff].DmgMod 
-				              * GameModsConfig.Instance.Rate.GetDamageByDifficulty(diff)
+				DmgModifier = handicapLevels.HandicapLevelTables[handicapIndex].DmgMod 
+			              * GameModsConfig.Instance.Rate.GetDamageByDifficulty(Difficulty)
 				              * GameModsConfig.Instance.Monster.DamageMultiplier;
-				XpModifier = (1f + handicapLevels.HandicapLevelTables[diff].XPMod) * GameModsConfig.Instance.Rate.Experience;
-				GoldModifier = (1f + handicapLevels.HandicapLevelTables[diff].GoldMod * GameModsConfig.Instance.Rate.Gold);
+				XpModifier = (1f + handicapLevels.HandicapLevelTables[handicapIndex].XPMod) * GameModsConfig.Instance.Rate.Experience;
+				GoldModifier = (1f + handicapLevels.HandicapLevelTables[handicapIndex].GoldMod * GameModsConfig.Instance.Rate.Gold);
 			}
 			else
 			{
-				HpModifier = GameModsConfig.Instance.Rate.HealthByDifficulty[diff] * GameModsConfig.Instance.Monster.HealthMultiplier;
-				DmgModifier = GameModsConfig.Instance.Rate.GetDamageByDifficulty(diff) * GameModsConfig.Instance.Monster.DamageMultiplier;
+				HpModifier = GameModsConfig.Instance.Rate.HealthByDifficulty[Difficulty] * GameModsConfig.Instance.Monster.HealthMultiplier;
+				DmgModifier = GameModsConfig.Instance.Rate.GetDamageByDifficulty(Difficulty) * GameModsConfig.Instance.Monster.DamageMultiplier;
 				XpModifier = 1f + GameModsConfig.Instance.Rate.Experience;
 				GoldModifier = (1f * GameModsConfig.Instance.Rate.Gold);
 			}
 			
-			Logger.Info($"$[italic]$Updated Game #$[underline]${GameId}$[/]$ difficulty to {diff}.$[/]$");
+			Logger.Info($"$[italic]$Updated Game #$[underline]${GameId}$[/]$ difficulty to {Difficulty}.$[/]$");
 
 			foreach (var wld in _worlds)
 			foreach (var monster in wld.Value.Monsters)

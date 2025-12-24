@@ -121,31 +121,41 @@ namespace DiIiS_NA.GameServer.GSSystem.ActorSystem
 				Logger.MethodTrace($"$[yellow]${connectedPlayers.Length}$[/]$ $[green]$players online$[/]$: $[blue dim]${maxUsersHealth}$[/]$ $[bold]$avg. max health$[/]$ / $[blue dim italic]${deltaDamageUsers}$[/]$ $[bold]$avg. delta damage$[/]$");
 			}
 
-            var difficulty = World.Game.Difficulty;
-            var maxHP = (monsterLevels.MonsterLevel[monsterLevel].HPMin +
-                         RandomHelper.NextFloat(0f, monsterLevels.MonsterLevel[monsterLevel].HPDelta)) *
-                        HpMultiplier * World.Game.HpModifier;
+			var difficulty = World.Game.Difficulty;
+			var levelRow = monsterLevels.MonsterLevel[monsterLevel];
+
+			// Base HP/Damage from the MonsterLevelTable, then apply game difficulty + per-monster mpq multipliers.
+			var maxHP = (levelRow.HPMin + RandomHelper.NextFloat(0f, levelRow.HPDelta)) *
+			            HpMultiplier * World.Game.HpModifier;
+			var baseDmgMin = levelRow.Dmg * DmgMultiplier * World.Game.DmgModifier;
+			var baseDmgDelta = levelRow.DmgDelta * DmgMultiplier * World.Game.DmgModifier;
+
+			// Additional scaling (player-count/level scaling, etc.)
 			var bonus = CalculateLevelAdjustment(LevelAdjustmentEnum.LinearScaling, difficulty, connectedPlayers);
             
 			Attributes[GameAttributes.Hitpoints_Max] = maxHP;
             Attributes[GameAttributes.Hitpoints_Max_Percent_Bonus_Multiplicative] = bonus;
 
-            var baseHp = Attributes[GameAttributes.Hitpoints_Max];
-            var baseDamage = Attributes[GameAttributes.Damage_Weapon_Min, 0];
+			var baseHp = Attributes[GameAttributes.Hitpoints_Max] * bonus;
+			var scaledDmgMin = baseDmgMin * bonus;
+			var scaledDmgDelta = baseDmgDelta * bonus;
 
-			// Apply calculated scaling
-            baseHp *= bonus;
-            baseDamage *= bonus;
+			// Apply configuration modifiers (these are server-side knobs in GameModsConfig)
+			baseHp *= GameModsConfig.Instance.Monster.HealthMultiplier;
+			scaledDmgMin *= GameModsConfig.Instance.Monster.DamageMultiplier;
+			scaledDmgDelta *= GameModsConfig.Instance.Monster.DamageMultiplier;
 
-            // Apply configuration modifiers
-            baseHp *= GameModsConfig.Instance.Monster.HealthMultiplier;
-            baseDamage *= GameModsConfig.Instance.Monster.DamageMultiplier;
+			// Assign modified values
+			Attributes[GameAttributes.Hitpoints_Max_Total] = baseHp;
 
-            // Assign modified values 
-            Attributes[GameAttributes.Hitpoints_Max_Total] = baseHp;
-            Attributes[GameAttributes.Damage_Weapon_Min, 0] = baseDamage;
+			// Monsters don't use item-based weapon rolls, so set the "total" weapon damage directly.
+			// HitPayload uses Damage_Weapon_Min_Total/Delta_Total for non-player attackers.
+			Attributes[GameAttributes.Damage_Weapon_Min, 0] = scaledDmgMin;
+			Attributes[GameAttributes.Damage_Weapon_Delta, 0] = scaledDmgDelta;
+			Attributes[GameAttributes.Damage_Weapon_Min_Total, 0] = scaledDmgMin;
+			Attributes[GameAttributes.Damage_Weapon_Delta_Total, 0] = scaledDmgDelta;
             //if (full_hp)
-            Attributes[GameAttributes.Hitpoints_Cur] = Attributes[GameAttributes.Hitpoints_Max_Total];
+			Attributes[GameAttributes.Hitpoints_Cur] = Attributes[GameAttributes.Hitpoints_Max_Total];
 
 			Attributes.BroadcastChangedIfRevealed();
 		}
