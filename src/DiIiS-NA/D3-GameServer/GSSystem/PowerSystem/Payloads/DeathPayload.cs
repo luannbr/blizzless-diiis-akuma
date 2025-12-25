@@ -1048,13 +1048,23 @@ namespace DiIiS_NA.GameServer.GSSystem.PowerSystem.Payloads
 					}
 				}
 
-				if (Context.User is Player & Target is Monster)
-					if (RandomHelper.Next(0, 100) > 40 && ((Player)Context.User).Toon.Class == ToonClass.Necromancer)
+				if (Target is Monster && Target is not Boss && Target.SNO != ActorSno._p6_necro_corpse_flesh)
+				{
+					// Necromancer corpse skills require a usable corpse actor. Always spawn one for monster deaths
+					// when a Necromancer player is nearby in the same world instance (retail-like behavior).
+					const float necroCorpseSpawnRange = 120f;
+					var deathPos = positionOfDeath;
+					var necroNearby = Target.World.Game.Players.Values.Any(p =>
+						p != null && p.Toon != null && p.Toon.Class == ToonClass.Necromancer &&
+						p.World == Target.World &&
+						p.Position.DistanceSquared(ref deathPos) <= necroCorpseSpawnRange * necroCorpseSpawnRange);
+					if (necroNearby)
 					{
-						var flesh = Context.User.World.SpawnMonster(ActorSno._p6_necro_corpse_flesh, positionOfDeath);
+						var flesh = Target.World.SpawnMonster(ActorSno._p6_necro_corpse_flesh, positionOfDeath);
 						flesh.Attributes[GameAttributes.Necromancer_Corpse_Source_Monster_SNO] = (int)Target.SNO;
 						flesh.Attributes.BroadcastChangedIfRevealed();
 					}
+				}
 			}
 
 			if (Target is Monster target1)
