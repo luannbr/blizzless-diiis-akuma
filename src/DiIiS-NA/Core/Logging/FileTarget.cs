@@ -8,14 +8,18 @@ namespace DiIiS_NA.Core.Logging
 {
 	public class FileTarget : LogTarget, IDisposable
 	{
+		private static readonly Regex AnsiColorRegex = new Regex(@"\$\[\[?([\w\W\d\s_\-\/]+)\]\]?\$", RegexOptions.Compiled);
+
 		private readonly string _fileName; 
 		private readonly string _filePath; 
 		private readonly string _fileTimestamp; 
 		private FileStream _fileStream; 
 		private StreamWriter _logStream; 
 		private int _fileIndex; 
-		private ConcurrentQueue<Action> TaskQueue;
-		private Thread LoggerThread;
+		private readonly ConcurrentQueue<Action> TaskQueue;
+		private readonly AutoResetEvent QueueEvent = new AutoResetEvent(false);
+		private readonly Thread LoggerThread;
+		private volatile bool _running = true;
 
 		/// <param name="fileName">Filename of the logfile.</param>
 		/// <param name="minLevel">Minimum level of messages to emit</param>
@@ -48,12 +52,30 @@ namespace DiIiS_NA.Core.Logging
 
 		public void CheckQueue()
 		{
-			while (true)
+			while (_running)
 			{
-				if (TaskQueue.TryDequeue(out var action))
-					action.Invoke();
+				// Drain the queue quickly if there is work.
+				while (_running && TaskQueue.TryDequeue(out var action))
+				{
+					try
+					{
+						action.Invoke();
+					}
+					catch
+					{
+						// Never let logging take down the process.
+					}
+				}
 
-				Thread.Sleep(1);
+				// If no work is available, block until signaled.
+				if (_running && TaskQueue.IsEmpty)
+					QueueEvent.WaitOne(250);
+			}
+
+			// Best effort: flush remaining messages during shutdown.
+			while (TaskQueue.TryDequeue(out var action))
+			{
+				try { action.Invoke(); } catch { }
 			}
 		}
 
@@ -62,7 +84,7 @@ namespace DiIiS_NA.Core.Logging
 		/// </summary>
 		/// <param name="message"></param>
 		/// <returns></returns>
-		private string NoColors(string message) => Regex.Replace(message, @"\$\[\[?([\w\W\d\s_\-\/]+)\]\]?\$", "$1");
+		private static string NoColors(string message) => AnsiColorRegex.Replace(message, "$1");
 
 		/// <param name="level">Log level.</param>
 		/// <param name="logger">Source of the log message.</param>
@@ -89,6 +111,7 @@ namespace DiIiS_NA.Core.Logging
 						: $"{timeStamp}{message}");
 				}
 			});
+			QueueEvent.Set();
 		}
 
 		/// <param name="level">Log level.</param>
@@ -107,6 +130,7 @@ namespace DiIiS_NA.Core.Logging
 						$"{timeStamp}[{level.ToString(),5}] [{logger}]: {message} - [Exception] {exception}");
 				}
 			});
+			QueueEvent.Set();
 		}
 
 		#region de-ctor
@@ -124,12 +148,22 @@ namespace DiIiS_NA.Core.Logging
 		{
 			if (_disposed) return; // if already disposed, just return
 
+			_running = false;
+			QueueEvent.Set();
+			try
+			{
+				if (LoggerThread != null && LoggerThread.IsAlive)
+					LoggerThread.Join(2000);
+			}
+			catch { }
+
 			if (disposing) // only dispose managed resources if we're called from directly or in-directly from user code.
 			{
 				_logStream.Close();
 				_logStream.Dispose();
 				_fileStream.Close();
 				_fileStream.Dispose();
+				QueueEvent.Dispose();
 			}
 
 			_logStream = null;

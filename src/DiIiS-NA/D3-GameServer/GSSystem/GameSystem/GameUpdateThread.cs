@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.Linq;
 using System.Collections.Generic;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Runtime.InteropServices;
 using DiIiS_NA.Core.Logging;
 
@@ -31,14 +30,16 @@ namespace DiIiS_NA.GameServer.GSSystem.GameSystem
 		private static readonly Logger Logger = LogManager.CreateLogger();
 		public List<Game> Games = new List<Game>();
 
-		private object _lock = new object();
+		private readonly object _lock = new object();
 
 		public ulong CPUAffinity = 0;
 
 		public void Run()
 		{
-			List<Game> inactiveGames = new List<Game>();
-			int missedTicks = 0;
+			var inactiveGames = new List<Game>();
+			var gameSnapshot = new List<Game>();
+			var stopwatch = new Stopwatch();
+			var lastOverrunLog = Stopwatch.StartNew();
 
 			Thread.BeginThreadAffinity();
 			if (CPUAffinity != 0)
@@ -51,72 +52,59 @@ namespace DiIiS_NA.GameServer.GSSystem.GameSystem
 
 			while (true)
 			{
-				Stopwatch stopwatch = new Stopwatch();
 				stopwatch.Restart();
 
+				// Snapshot the games list quickly under lock, then update outside the lock.
+				gameSnapshot.Clear();
+				inactiveGames.Clear();
 				lock (_lock)
 				{
-					foreach (var game in Games)
+					for (int i = 0; i < Games.Count; i++)
 					{
+						var game = Games[i];
 						if (!game.Working)
 							inactiveGames.Add(game);
 						else
-						{
-							if (!game.UpdateInProgress)
-							{
-								game.UpdateInProgress = true;
-								Task.Run(() =>
-								{
-                                    try
-                                    {
-                                        game.Update();
-                                    }
-                                    catch (Exception ex)
-                                    {
-										Logger.ErrorException(ex, "Error in Game.Update()");
-                                    }
-
-									game.MissedTicks = 0;
-									game.UpdateInProgress = false;
-								});
-							}
-							else
-							{
-								game.MissedTicks += 6;
-                                if (game.MissedTicks > 60)
-                                {
-                                    Logger.Warn("Game.Update() is running too slow. GameId: {0}", game.GameId);
-                                    game.MissedTicks = 0;
-                                }
-							}
-						}
+							gameSnapshot.Add(game);
 					}
 
-                    foreach (var game in inactiveGames)
-                    {
-                        game.Working = false;
-                        Games.Remove(game);
-                    }
+					// Remove inactive games while we already hold the lock.
+					for (int i = 0; i < inactiveGames.Count; i++)
+						Games.Remove(inactiveGames[i]);
+				}
 
-                    inactiveGames.Clear();
+				// Update each active game on this dedicated update thread.
+				// This avoids per-tick Task.Run allocations and threadpool contention, which were a major source of lag/stutter.
+				for (int i = 0; i < gameSnapshot.Count; i++)
+				{
+					var game = gameSnapshot[i];
+					try
+					{
+						game.Update();
+					}
+					catch (Exception ex)
+					{
+						Logger.ErrorException(ex, "Error in Game.Update()");
+					}
 				}
 
 				stopwatch.Stop();
+				var elapsedMs = stopwatch.ElapsedMilliseconds;
 
-				var compensation = (int)(100 - stopwatch.ElapsedMilliseconds); // the compensation value we need to sleep in order to get consistent 100 ms Game.Update().
+				// Sleep to maintain a consistent 100ms update cadence.
+				int compensation = (int)(100 - elapsedMs);
+				if (elapsedMs > 100)
+				{
+					// Throttle this log to avoid flooding when the server is under load.
+					if (lastOverrunLog.ElapsedMilliseconds >= 5000)
+					{
+						Logger.Trace("Game.Update() loop took [{0}ms] more than Game.UpdateFrequency [{1}ms].", elapsedMs, 100);
+						lastOverrunLog.Restart();
+					}
+					compensation = (int)(100 - (elapsedMs % 100));
+				}
 
-				if (stopwatch.ElapsedMilliseconds > 100)
-				{
-					Logger.Trace("Game.Update() took [{0}ms] more than Game.UpdateFrequency [{1}ms].", stopwatch.ElapsedMilliseconds, 100);
-					compensation = (int)(100 - (stopwatch.ElapsedMilliseconds % 100));
-					missedTicks = 6 * (int)(stopwatch.ElapsedMilliseconds / 100);
-					Thread.Sleep(Math.Max(0, compensation)); // sleep until next Update().
-				}
-				else
-				{
-					missedTicks = 0;
-					Thread.Sleep(Math.Max(0, compensation)); // sleep until next Update().
-				}
+				Thread.Sleep(Math.Max(0, compensation));
 			}
 
 			//Thread.EndThreadAffinity();

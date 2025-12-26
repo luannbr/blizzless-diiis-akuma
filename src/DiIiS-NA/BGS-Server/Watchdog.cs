@@ -2,7 +2,6 @@
 using DiIiS_NA.Core.Schedulers;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace DiIiS_NA.LoginServer
 {
@@ -36,8 +35,14 @@ namespace DiIiS_NA.LoginServer
 						}
 						this.TasksToRemove.Clear();
 
-						foreach (var task in this.ScheduledTasks.Where(t => this.Seconds % t.Delay == 0))
+						// Avoid LINQ allocations in this 1Hz loop.
+						for (int i = 0; i < this.ScheduledTasks.Count; i++)
 						{
+							var task = this.ScheduledTasks[i];
+							if (task.Delay == 0)
+								continue;
+							if (this.Seconds % task.Delay != 0)
+								continue;
 							try
 							{
 								task.Task.Invoke();
@@ -61,7 +66,10 @@ namespace DiIiS_NA.LoginServer
 
 		public void AddTask(uint Delay, Action Task)
 		{
-			this.ScheduledTasks.Add(new ScheduledTask { Delay = Delay, Task = Task });
+			lock (this.ScheduledTasks)
+			{
+				this.ScheduledTasks.Add(new ScheduledTask { Delay = Delay, Task = Task });
+			}
 		}
 
 		public class ScheduledTask
