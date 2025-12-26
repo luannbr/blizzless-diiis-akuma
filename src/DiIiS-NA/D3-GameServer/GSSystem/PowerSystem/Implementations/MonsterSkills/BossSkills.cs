@@ -4,6 +4,7 @@ using DiIiS_NA.GameServer.Core.Types.SNO;
 using DiIiS_NA.GameServer.Core.Types.TagMap;
 using DiIiS_NA.GameServer.GSSystem.ActorSystem;
 using DiIiS_NA.GameServer.GSSystem.PowerSystem.Payloads;
+using DiIiS_NA.GameServer.GSSystem.PowerSystem.Implementations.MonsterSkills;
 using DiIiS_NA.GameServer.GSSystem.TickerSystem;
 using DiIiS_NA.GameServer.MessageSystem;
 using System.Collections.Generic;
@@ -187,11 +188,9 @@ namespace DiIiS_NA.GameServer.GSSystem.PowerSystem.Implementations
     #endregion
 	//II Act
     #region Maghda
-    [ImplementsPowerSNO(131749)]
+	[ImplementsPowerSNO(131749)]
 	public class MaghdaTeleport : Skill
 	{
-		public float CooldownTime = 10f;
-
 		public override IEnumerable<TickTimer> Main()
 		{
 			if (Target != null)
@@ -204,21 +203,101 @@ namespace DiIiS_NA.GameServer.GSSystem.PowerSystem.Implementations
 			yield break;
 		}
 	}
+
+	// Maghda_Summon_Berserker.pow (also spawns cultists like retail)
 	[ImplementsPowerSNO(131744)]
 	public class MaghdaSummonBerserker : SummoningSkill
 	{
-		public float CooldownTime = 5f;
 		public override IEnumerable<TickTimer> Main()
 		{
-			if (User.GetActorsInRange(80f).Count < 20)
-				for (int i = 0; i < 2; i++)
+			// Less strict cap: GetActorsInRange includes lots of world actors, so keep this high.
+			if (User.GetActorsInRange(80f).Count >= 80)
+				yield break;
+
+			// 1-2 berserkers
+			for (int i = 0; i < 2; i++)
+			{
+				var monster = ActorFactory.Create(User.World, ActorSno._triune_berserker_maghdapet, new TagMap());
+				monster.Scale = 1.35f;
+				monster.EnterWorld(RandomDirection(User.Position, 3, 10));
+				monster.Unstuck();
+				World.BuffManager.AddBuff(User, monster, new SummonedBuff());
+			}
+
+			// 2-4 cultists (adds pressure + matches expected encounter feel)
+			for (int i = 0; i < 3; i++)
+			{
+				var cultist = ActorFactory.Create(User.World, ActorSno._triunecultist_c_maghda, new TagMap());
+				cultist.EnterWorld(RandomDirection(User.Position, 3, 12));
+				cultist.Unstuck();
+				World.BuffManager.AddBuff(User, cultist, new SummonedBuff());
+			}
+
+			yield break;
+		}
+	}
+
+	// Maghda_Punish.pow - primary ranged attack (poison projectile)
+	[ImplementsPowerSNO(131746)]
+	public class MaghdaPunish : SingleProjectileSkill
+	{
+		public override IEnumerable<TickTimer> Main()
+		{
+			var target = Target ?? GetClosestEnemy(65f);
+			if (target == null)
+				yield break;
+
+			Target = target;
+
+			SetProjectile(this, ActorSno._maghda_punish_projectile, User.Position, 1.35f, (hit) =>
+			{
+				// Tuned up: consistent, noticeable damage.
+				WeaponDamage(hit, 3.25f, DamageType.Poison);
+				projectile.Destroy();
+			});
+
+			foreach (var t in Launch())
+				yield return t;
+		}
+
+		private Actor GetClosestEnemy(float range)
+		{
+			Actor best = null;
+			float bestDistSq = range * range;
+
+			foreach (var actor in GetEnemiesInRadius(User.Position, range).Actors)
+			{
+				var dx = actor.Position.X - User.Position.X;
+				var dy = actor.Position.Y - User.Position.Y;
+				var d2 = (dx * dx) + (dy * dy);
+				if (d2 < bestDistSq)
 				{
-					var monster = ActorFactory.Create(User.World, ActorSno._triune_berserker_maghdapet, new TagMap());
-					monster.Scale = 1.35f;
-					monster.EnterWorld(RandomDirection(User.Position, 3, 10));
-					monster.Unstuck();
-					World.BuffManager.AddBuff(User, monster, new SummonedBuff());
+					best = actor;
+					bestDistSq = d2;
 				}
+			}
+
+			return best;
+		}
+	}
+
+	// Maghda_MothDust.pow - AoE poison DoT
+	[ImplementsPowerSNO(131745)]
+	public class MaghdaMothDust : Skill
+	{
+		public override IEnumerable<TickTimer> Main()
+		{
+			// 5 second poison cloud simulated via ticks
+			for (int tick = 0; tick < 5; tick++)
+			{
+				AttackPayload attack = new AttackPayload(this);
+				attack.Targets = GetEnemiesInRadius(User.Position, 22f);
+				attack.AddWeaponDamage(0.85f, DamageType.Poison);
+				attack.Apply();
+
+				yield return WaitSeconds(1.0f);
+			}
+
 			yield break;
 		}
 	}

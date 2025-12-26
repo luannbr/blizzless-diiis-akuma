@@ -165,9 +165,11 @@ namespace DiIiS_NA.GameServer.GSSystem.ActorSystem.Implementations
 						monsterBrain.AddPresetPower(152540);
 						break;
 					case ActorSno._maghda: //Maghda
-						monsterBrain.AddPresetPower(131744); //summon berserker
-						//(Brain as MonsterBrain).AddPresetPower(131745); //mothDust
-						monsterBrain.AddPresetPower(131749); //teleport
+						// Ensure Maghda always has offensive options (retail-like behavior)
+						monsterBrain.AddPresetPower(131744); // Maghda_Summon_Berserker (adds)
+						monsterBrain.AddPresetPower(131745); // Maghda_MothDust (AoE poison)
+						monsterBrain.AddPresetPower(131746); // Maghda_Punish (poison projectile)
+						monsterBrain.AddPresetPower(131749); // Maghda_Teleport
 						break;
 					case ActorSno._gluttony: //Gluttony
 						monsterBrain.AddPresetPower(93676); //gas cloud
