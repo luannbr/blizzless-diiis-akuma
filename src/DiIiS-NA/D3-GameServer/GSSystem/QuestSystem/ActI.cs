@@ -467,7 +467,30 @@ namespace DiIiS_NA.GameServer.GSSystem.QuestSystem
                     //this.Game.GetWorld(60713).SpawnMonster(115403, new Vector3D{X = 99.131f, Y = 211.501f, Z = 0.1f});
                     Game.AddOnLoadWorldAction(WorldSno.trdun_cain_intro, () =>
                     {
-                        SetActorOperable(Game.GetWorld(WorldSno.trdun_cain_intro), ActorSno._trdun_skeletonking_intro_sealed_door, false);
+                        var introWorld = Game.GetWorld(WorldSno.trdun_cain_intro);
+
+                        // Prevent leaving the encounter early.
+                        SetActorOperable(introWorld, ActorSno._trdun_skeletonking_intro_sealed_door, false);
+
+                        // Fix soft-lock: the quest-required unique skeleton sometimes fails to spawn.
+                        // Ensure it exists and is flagged as a quest monster so the objective can complete.
+                        if (Game.CurrentQuest == 72095 && Game.CurrentStep == 15)
+                        {
+                            var existing = introWorld.GetActorBySNO(ActorSno._skeleton_a_cain_unique, true);
+                            if (existing == null)
+                            {
+                                var player = introWorld.Players.Values.FirstOrDefault() ?? Game.FirstPlayer();
+                                var spawnPos = (player != null) ? player.Position.Around(6f) : new Vector3D { X = 0f, Y = 0f, Z = 0f };
+                                var skel = introWorld.SpawnMonster(ActorSno._skeleton_a_cain_unique, spawnPos);
+                                skel.Attributes[GameAttributes.Quest_Monster] = true;
+                                skel.Attributes.BroadcastChangedIfRevealed();
+                            }
+                            else
+                            {
+                                existing.Attributes[GameAttributes.Quest_Monster] = true;
+                                existing.Attributes.BroadcastChangedIfRevealed();
+                            }
+                        }
                     });
                     ListenKill(ActorSno._skeleton_a_cain_unique, 1, new Advance());
                 }
