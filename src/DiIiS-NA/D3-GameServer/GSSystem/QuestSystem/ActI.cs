@@ -184,6 +184,56 @@ namespace DiIiS_NA.GameServer.GSSystem.QuestSystem
 
                     Break(world, ActorSno._trout_wagon_barricade);
 
+                    // Fix soft-lock: the quest-required Wretched Mother sometimes fails to spawn.
+                    // She can exist as different SNOs depending on scripts/world state, so ensure
+                    // both variants exist and are flagged as quest monsters.
+                    try
+                    {
+                        var player = world.Players.Values.FirstOrDefault() ?? Game.FirstPlayer();
+                        var basePos = (player != null) ? player.Position : new Vector3D { X = 0f, Y = 0f, Z = 0f };
+
+                        // Variant A
+                        var existingA = world.GetActorsBySNO(ActorSno._zombiefemale_a_tristramquest_unique).ToList();
+                        if (existingA.Any())
+                        {
+                            foreach (var a in existingA)
+                            {
+                                a.Attributes[GameAttributes.Quest_Monster] = true;
+                                a.Attributes.BroadcastChangedIfRevealed();
+                            }
+                        }
+                        else
+                        {
+                            var spawnedA = world.SpawnMonster(ActorSno._zombiefemale_a_tristramquest_unique, basePos.Around(6f));
+                            if (spawnedA != null)
+                            {
+                                spawnedA.Attributes[GameAttributes.Quest_Monster] = true;
+                                spawnedA.Attributes.BroadcastChangedIfRevealed();
+                            }
+                        }
+
+                        // Variant B
+                        var existingB = world.GetActorsBySNO(ActorSno._zombiefemale_unique_wretchedqueen).ToList();
+                        if (existingB.Any())
+                        {
+                            foreach (var a in existingB)
+                            {
+                                a.Attributes[GameAttributes.Quest_Monster] = true;
+                                a.Attributes.BroadcastChangedIfRevealed();
+                            }
+                        }
+                        else
+                        {
+                            var spawnedB = world.SpawnMonster(ActorSno._zombiefemale_unique_wretchedqueen, basePos.Around(8f));
+                            if (spawnedB != null)
+                            {
+                                spawnedB.Attributes[GameAttributes.Quest_Monster] = true;
+                                spawnedB.Attributes.BroadcastChangedIfRevealed();
+                            }
+                        }
+                    }
+                    catch { }
+
                     foreach (var sp in world.GetActorsBySNO(ActorSno._spawner_zombieskinny_a_immediate))
                     {
                         if (sp.CurrentScene.SceneSNO.Id == 33348)
