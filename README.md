@@ -31,7 +31,7 @@ DiIiS is a fully-functional open-source local server for [Diablo III: Reaper of 
 - Implemented LAN
 - Implemented Custom Feature: Optional Diablo 4 Season 3 style Blood Build Necromancer mechanics to Blood Siphon & Death Nova Skills.
 
-<img width="1920" height="1080" alt="Main" src="https://github.com/user-attachments/assets/90f41dc3-1243-4569-96b4-cfaf10ea242e" />
+![Main](https://github.com/user-attachments/assets/50443ec8-de3e-49b7-a8dc-92004ad42af9)
 
 # Installation
 
