@@ -1349,6 +1349,66 @@ private class BloodBuildExplosionLockout : Buff
         #endregion
         public override IEnumerable<TickTimer> Main()
         {
+            // Optional D4 Season 3-inspired Blood Nova (no rune required) - enabled via config.
+            if (GameServerConfig.Instance.NecromancerBloodBuildSeason3Enabled)
+            {
+                UsePrimaryResource(EvalTag(PowerKeys.ResourceCost));
+
+                // Primary pulse (from player)
+                const float primaryRadius = 25f;
+                const float primaryDmg = 3.25f; // tuned to feel strong without corpse interaction
+                const float secondaryRadius = 12f;
+                const float secondaryDmg = 1.75f; // smaller/weaker anchored pulses
+                const int maxAnchors = 8;
+
+                // Visual feedback (kept lightweight to avoid stutter)
+                User.PlayEffectGroup(462662);
+
+                var anchors = new List<Actor>(maxAnchors);
+
+                var primary = new AttackPayload(this)
+                {
+                    Targets = GetEnemiesInRadius(User.Position, primaryRadius)
+                };
+                primary.AddWeaponDamage(primaryDmg, DamageType.Physical);
+                primary.OnHit = hit =>
+                {
+                    if (hit?.Target == null)
+                        return;
+
+                    if (anchors.Count >= maxAnchors)
+                        return;
+
+                    var t = hit.Target;
+                    if (t == null || t.World == null)
+                        return;
+
+                    if (!anchors.Contains(t))
+                        anchors.Add(t);
+                };
+                primary.Apply();
+
+                // Secondary pulse: each enemy hit emits a smaller Blood Nova (array-based, capped)
+                foreach (var a in anchors)
+                {
+                    if (a == null || a.World == null)
+                        continue;
+
+                    var proxy = SpawnProxy(a.Position, new TickTimer(User.World.Game, 2));
+                    proxy.PlayEffectGroup(462662);
+
+                    var secondary = new AttackPayload(this)
+                    {
+                        Targets = GetEnemiesInRadius(a.Position, secondaryRadius)
+                    };
+                    secondary.AddWeaponDamage(secondaryDmg, DamageType.Physical);
+                    secondary.Apply();
+                }
+
+                yield break;
+            }
+
+
 
             UsePrimaryResource(EvalTag(PowerKeys.ResourceCost));
             //462392
