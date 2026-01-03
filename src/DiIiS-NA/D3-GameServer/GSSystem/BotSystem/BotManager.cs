@@ -31,6 +31,11 @@ namespace DiIiS_NA.GameServer.GSSystem.BotSystem
 		private static readonly ConcurrentDictionary<uint, List<uint>> WorldCombatBotIds = new();
 		private static readonly ConcurrentDictionary<uint, bool> WorldTownBotsSpawned = new();
 
+		// Track combat bots per GAME SESSION (prevents respawn/duplication across world transitions).
+		private static readonly ConcurrentDictionary<int, List<uint>> GameCombatBotIds = new();
+		private static readonly ConcurrentDictionary<int, bool> GameCombatBotsSpawned = new();
+		private static readonly ConcurrentDictionary<int, object> GameLocks = new();
+
 		// A small pool of "minion-like" actor SNOs that have valid monster data + basic attacks.
 		private static readonly ActorSno[] CombatBotSnos =
 		{
@@ -78,28 +83,68 @@ namespace DiIiS_NA.GameServer.GSSystem.BotSystem
 			if (maxBots == 0) return;
 
 			var origin = anchorPlayer.Position;
-			var ids = WorldCombatBotIds.GetOrAdd(world.GlobalID, _ => new List<uint>());
 
-			// Clean up stale references.
-			ids.RemoveAll(id => world.GetActorByGlobalId(id) == null);
+			var gameId = world.Game?.GameId ?? 0;
+			var lockObj = GameLocks.GetOrAdd(gameId, _ => new object());
 
-			// Spawn any missing bots.
-			var toSpawn = Math.Max(0, maxBots - ids.Count);
-			for (int i = 0; i < toSpawn; i++)
+			List<uint> ids;
+			lock (lockObj)
 			{
-				var slot = ids.Count; // next slot
-				var sno = CombatBotSnos[slot % CombatBotSnos.Length];
-				var pos = FormationPoint(origin, slot, 10f);
-				if (!world.CheckLocationForFlag(pos, DiIiS_NA.Core.MPQ.FileFormats.Scene.NavCellFlags.AllowWalk))
-					pos = origin;
+				ids = GameCombatBotIds.GetOrAdd(gameId, _ => new List<uint>());
 
-				var bot = new Minion(world, sno, anchorPlayer, new TagMap());
-				bot.Attributes[GameAttributes.Is_Helper] = false;
-				bot.Attributes[GameAttributes.TeamID] = anchorPlayer.Attributes[GameAttributes.TeamID];
-				bot.Attributes[GameAttributes.Team_Override] = 1;
-				bot.Brain = new BotBrain(bot, anchorPlayer, slot);
-				bot.EnterWorld(pos);
-				ids.Add(bot.GlobalID);
+				// Adopt any already-existing combat bots in this world (e.g., after world transitions).
+				// We identify combat bots by their BotBrain.
+				var discovered = world.Actors.Values
+					.OfType<Minion>()
+					.Where(m => m.Brain is BotBrain)
+					.Select(m => m.GlobalID)
+					.ToList();
+
+				foreach (var id in discovered)
+				{
+					if (!ids.Contains(id))
+						ids.Add(id);
+				}
+
+				// Mark the session as having spawned/bound bots once any exist.
+				if (ids.Count > 0 && !GameCombatBotsSpawned.ContainsKey(gameId))
+					GameCombatBotsSpawned[gameId] = true;
+
+				var spawnedAlready = GameCombatBotsSpawned.TryGetValue(gameId, out var s) && s;
+
+				// Spawn combat bots ONLY once per session, and ONLY in town worlds (session start location).
+				if (!spawnedAlready && IsTownWorld(world))
+				{
+					var toSpawn = Math.Max(0, maxBots - ids.Count);
+					for (int i = 0; i < toSpawn; i++)
+					{
+						var slot = ids.Count; // next slot
+						var sno = CombatBotSnos[slot % CombatBotSnos.Length];
+						var pos = FormationPoint(origin, slot, 10f);
+						if (!world.CheckLocationForFlag(pos, DiIiS_NA.Core.MPQ.FileFormats.Scene.NavCellFlags.AllowWalk))
+							pos = origin;
+
+						var bot = new Minion(world, sno, anchorPlayer, new TagMap());
+						bot.Attributes[GameAttributes.Is_Helper] = false;
+						bot.Attributes[GameAttributes.TeamID] = anchorPlayer.Attributes[GameAttributes.TeamID];
+						bot.Attributes[GameAttributes.Team_Override] = 1;
+						bot.Brain = new BotBrain(bot, anchorPlayer, slot);
+						bot.EnterWorld(pos);
+						ids.Add(bot.GlobalID);
+					}
+
+					// From this point on, never spawn additional combat bots in this session (prevents duplication).
+					GameCombatBotsSpawned[gameId] = true;
+				}
+			}
+
+			// Maintain a per-world view for logging/debug (do not use it for spawn decisions).
+			var worldIds = WorldCombatBotIds.GetOrAdd(world.GlobalID, _ => new List<uint>());
+			worldIds.Clear();
+			for (int i = 0; i < ids.Count; i++)
+			{
+				if (world.GetActorByGlobalId(ids[i]) != null)
+					worldIds.Add(ids[i]);
 			}
 
 			// Every time a player enters the world, re-anchor + reposition all bots near that player.
@@ -108,6 +153,7 @@ namespace DiIiS_NA.GameServer.GSSystem.BotSystem
 				var actor = world.GetActorByGlobalId(ids[i]);
 				var bot = actor as Minion;
 				if (bot == null) continue;
+
 				bot.Master = anchorPlayer;
 				bot.Attributes[GameAttributes.TeamID] = anchorPlayer.Attributes[GameAttributes.TeamID];
 				bot.Attributes[GameAttributes.Team_Override] = 1;
@@ -120,14 +166,16 @@ namespace DiIiS_NA.GameServer.GSSystem.BotSystem
 				bot.Brain?.DeActivate();
 				bot.Brain = new BotBrain(bot, anchorPlayer, i);
 				bot.Brain?.Activate();
+
 				var p = FormationPoint(origin, i, 10f);
 				if (!world.CheckLocationForFlag(p, DiIiS_NA.Core.MPQ.FileFormats.Scene.NavCellFlags.AllowWalk))
 					p = origin;
+
 				bot.CheckPointPosition = p;
 				bot.Teleport(p);
 			}
 
-			Logger.Info($"[Bots] Combat bots active: {ids.Count} in world {world.SNO} (#{world.GlobalID}).");
+			Logger.Info($"[Bots] Combat bots active: {worldIds.Count} in world {world.SNO} (#{world.GlobalID}).");
 		}
 
 		private static Vector3D FormationPoint(Vector3D anchor, int slot, float radius)
