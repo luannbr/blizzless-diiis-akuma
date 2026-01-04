@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -292,40 +292,53 @@ namespace DiIiS_NA.GameServer.GSSystem.MapSystem
 				.ToImmutableArray();
 		}
 
+		private readonly List<IUpdateable> _actorsToUpdate = new(256);
+		private readonly HashSet<IUpdateable> _actorsToUpdateSet = new();
+
 		public void Update(int tickCounter)
 		{
+			// Flush outgoing messages early to reduce perceived latency during heavy frames.
 			foreach (var player in Players.Values)
 			{
-				player.InGameClient.SendTick(); // if there's available messages to send, will handle ticking and flush the outgoing buffer.
+				player.InGameClient.SendTick();
 			}
 
-			var actorsToUpdate = new List<IUpdateable>(); // list of actor to update.
+			_actorsToUpdate.Clear();
+			_actorsToUpdateSet.Clear();
 
-			foreach (var player in Players.Values) // get players in the world.
+			// Update IUpdateable actors in range of players.
+			foreach (var player in Players.Values)
 			{
-				foreach (var actor in player.GetActorsInRange().OfType<IUpdateable>()) // get IUpdateable actors in range.
+				foreach (var actor in player.GetActorsInRange())
 				{
-					if (actorsToUpdate.Contains(actor)) // don't let a single actor in range of more than players to get updated more thance per tick /raist.
+					if (actor is not IUpdateable updateable)
 						continue;
 
-					actorsToUpdate.Add(actor);
+					if (_actorsToUpdateSet.Add(updateable))
+						_actorsToUpdate.Add(updateable);
 				}
 			}
-			foreach (var minion in Actors.Values.OfType<Minion>())
+
+			// Always update minions (bots) even if not currently in a player's in-range set,
+			// so follow/leash AI continues to tick and they don't get left behind.
+			foreach (var actor in Actors.Values)
 			{
-				if (actorsToUpdate.Contains(minion))
+				if (actor is not Minion minion)
 					continue;
-				actorsToUpdate.Add(minion);
+
+				if (_actorsToUpdateSet.Add(minion))
+					_actorsToUpdate.Add(minion);
 			}
-			foreach (var actor in actorsToUpdate) // trigger the updates.
+
+			for (int i = 0; i < _actorsToUpdate.Count; i++)
 			{
-				actor.Update(tickCounter);
+				_actorsToUpdate[i].Update(tickCounter);
 			}
 
 			BuffManager.Update();
 			PowerManager.Update();
 
-			if (tickCounter % 6 == 0 && _flippyTimers.Any())
+			if (tickCounter % 6 == 0 && _flippyTimers.Count > 0)
 			{
 				UpdateFlippy(tickCounter);
 			}
@@ -1078,12 +1091,12 @@ namespace DiIiS_NA.GameServer.GSSystem.MapSystem
 			if (_flippyTimers.Peek() == null)
 				_flippyTimers.Dequeue();
 
-			if (_flippyTimers.Peek().Count() == 2)
+			if (_flippyTimers.Peek().Count == 2)
 				_flippyTimers.Peek().Dequeue().Invoke();
 			else
 			{
 				_flippyTimers.Dequeue().Dequeue().Invoke();
-				if (_flippyTimers.Any())
+				if (_flippyTimers.Count > 0)
 					_flippyTimers.Peek().Dequeue().Invoke();
 			}
 		}

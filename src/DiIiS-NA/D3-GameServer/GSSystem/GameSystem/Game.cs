@@ -1,4 +1,4 @@
-﻿using DiIiS_NA.GameServer.MessageSystem;
+using DiIiS_NA.GameServer.MessageSystem;
 using GameBalance = DiIiS_NA.Core.MPQ.FileFormats.GameBalance;
 using System;
 using System.Collections.Concurrent;
@@ -488,8 +488,7 @@ namespace DiIiS_NA.GameServer.GSSystem.GameSystem
 		{
 			while (Working)
 			{
-				Stopwatch tickWatch = new Stopwatch();
-				tickWatch.Restart();
+				var tickStartTimestamp = Stopwatch.GetTimestamp();
 				if (Players.Count == 0 && !Empty)
 				{
 					Logger.Info("All players disconnected, game session $[underline red]$closed$[/]$");
@@ -510,8 +509,10 @@ namespace DiIiS_NA.GameServer.GSSystem.GameSystem
 					// only update worlds with active players in it - so mob brain()'s in empty worlds doesn't get called and take actions for nothing. /raist.
 					lock (_updateLock)
 					{
-						foreach (var pair in _worlds.Where(pair => pair.Value.HasPlayersIn))
+						foreach (var pair in _worlds)
 						{
+							if (!pair.Value.HasPlayersIn)
+								continue;
 							try
 							{
 								pair.Value.Update(_tickCounter);
@@ -529,40 +530,38 @@ namespace DiIiS_NA.GameServer.GSSystem.GameSystem
 					}
 				}
 
-				tickWatch.Stop();
+				var tickElapsedMs = (long)((Stopwatch.GetTimestamp() - tickStartTimestamp) * 1000L / Stopwatch.Frequency);
 
-				Stopwatch calcWatch = new();
-				calcWatch.Start();
+				var calcStartTimestamp = Stopwatch.GetTimestamp();
 				var compensation =
 					(int)(UpdateFrequency -
-					      tickWatch
-						      .ElapsedMilliseconds); // the compensation value we need to sleep in order to get consistent 100 ms Game.Update().
+					      tickElapsedMs); // the compensation value we need to sleep in order to get consistent 100 ms Game.Update().
 
-				if (tickWatch.ElapsedMilliseconds > UpdateFrequency)
+				if (tickElapsedMs > UpdateFrequency)
 				{
-					if (tickWatch.ElapsedMilliseconds >= UpdateFrequency * 2)
+					if (tickElapsedMs >= UpdateFrequency * 2)
 					{
 						Logger.Error(
-							$"took [{tickWatch.ElapsedMilliseconds}ms] more than Game.UpdateFrequency [{UpdateFrequency}ms].");
+							$"took [{tickElapsedMs}ms] more than Game.UpdateFrequency [{UpdateFrequency}ms].");
 					}
-					else if (tickWatch.ElapsedMilliseconds >= UpdateFrequency * 1.5)
+					else if (tickElapsedMs >= UpdateFrequency * 1.5)
 					{
 						Logger.Warn(
-							$"took [{tickWatch.ElapsedMilliseconds}ms] more than Game.UpdateFrequency [{UpdateFrequency}ms].");
+							$"took [{tickElapsedMs}ms] more than Game.UpdateFrequency [{UpdateFrequency}ms].");
 					}
 					else
 					{
 						Logger.Trace(
-							$"took [{tickWatch.ElapsedMilliseconds}ms] more than Game.UpdateFrequency [{UpdateFrequency}ms].");
+							$"took [{tickElapsedMs}ms] more than Game.UpdateFrequency [{UpdateFrequency}ms].");
 					}
 
-					compensation = (int)(UpdateFrequency - (tickWatch.ElapsedMilliseconds % UpdateFrequency));
-					MissedTicks = TickRate * (int)(tickWatch.ElapsedMilliseconds / UpdateFrequency);
+					compensation = (int)(UpdateFrequency - (tickElapsedMs % UpdateFrequency));
+					MissedTicks = TickRate * (int)(tickElapsedMs / UpdateFrequency);
 				}
 
-				calcWatch.Stop();
+				var calcElapsedMs = (long)((Stopwatch.GetTimestamp() - calcStartTimestamp) * 1000L / Stopwatch.Frequency);
 				Thread.Sleep(Math.Max(0,
-					compensation - (int)calcWatch.ElapsedMilliseconds)); // sleep until next Update().
+					compensation - (int)calcElapsedMs)); // sleep until next Update().
 			}
 		}
 
